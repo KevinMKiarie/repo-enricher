@@ -1,0 +1,39 @@
+name: Auto-Describe Repositories
+
+on:
+  workflow_dispatch:          
+  schedule:
+    - cron: '0 * * * *'      
+
+permissions:
+  contents: write             
+
+jobs:
+  describe:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Generate descriptions and tags
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # auto-provided — used for free GitHub Models AI
+          GH_PAT: ${{ secrets.GH_PAT }}               # your PAT — used to read/update all your repos
+        run: python .github/scripts/describe_repos.py
+
+      - name: Commit progress
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/repo_progress.json
+          git diff --cached --quiet && echo "Nothing to commit." || \
+            git commit -m "chore: update repo description progress [skip ci]" && git push
