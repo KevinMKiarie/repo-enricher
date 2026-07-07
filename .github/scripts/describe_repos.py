@@ -111,7 +111,7 @@ def main():
     pending = [
         r for r in repos
         if r['full_name'] not in done
-        and (not r.get('description', '').strip() or not r.get('topics', []))
+        and (not (r.get('description') or '').strip() or not r.get('topics', []))
     ]
 
     print(f'{len(pending)} repos to process, {len(done)} already done.')
