@@ -16,7 +16,7 @@ gh_headers = {
     'X-GitHub-Api-Version': '2022-11-28',
 }
 ai_headers = {
-    'Authorization': f'Bearer {os.environ["GITHUB_TOKEN"]}',
+    'Authorization': f'Bearer {os.environ["GH_PAT"]}',
     'Content-Type': 'application/json',
 }
 
