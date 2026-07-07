@@ -87,16 +87,21 @@ def ai_generate(repo_name, readme):
 
 
 def update_repo(owner, repo, description, topics):
-    requests.patch(
+    r1 = requests.patch(
         f'{GH_API}/repos/{owner}/{repo}',
         headers=gh_headers,
         json={'description': description},
     )
-    requests.put(
+    r2 = requests.put(
         f'{GH_API}/repos/{owner}/{repo}/topics',
         headers=gh_headers,
         json={'names': topics},
     )
+    if not r1.ok:
+        print(f'\n  [WARN] description update failed {r1.status_code}: {r1.text}')
+    if not r2.ok:
+        print(f'\n  [WARN] topics update failed {r2.status_code}: {r2.text}')
+    return r1.ok and r2.ok
 
 
 def main():
@@ -131,11 +136,14 @@ def main():
             save_progress(progress)
             raise SystemExit(0)
 
-        update_repo(owner, name, result['description'], result['topics'])
-        done.add(full_name)
-        progress['done'] = sorted(done)
-        save_progress(progress)
-        print(f'done  [{result["description"]}] tags={result["topics"]}')
+        updated = update_repo(owner, name, result['description'], result['topics'])
+        if updated:
+            done.add(full_name)
+            progress['done'] = sorted(done)
+            save_progress(progress)
+            print(f'done  [{result["description"]}] tags={result["topics"]}')
+        else:
+            print(f'skipped (update failed — see warning above)')
 
         time.sleep(1)
 
