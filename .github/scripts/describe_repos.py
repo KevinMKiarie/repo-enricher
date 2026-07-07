@@ -78,7 +78,9 @@ def ai_generate(repo_name, readme):
     if r.status_code == 429:
         return None, 'rate_limited'
 
-    r.raise_for_status()
+    if not r.ok:
+        print(f'\nGitHub Models error {r.status_code}: {r.text}')
+        r.raise_for_status()
     text = r.json()['choices'][0]['message']['content']
     data = json.loads(text[text.index('{'):text.rindex('}') + 1])
     return data, 'ok'
