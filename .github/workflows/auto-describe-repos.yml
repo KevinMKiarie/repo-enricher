@@ -26,7 +26,8 @@ jobs:
 
       - name: Generate descriptions and tags
         env:
-          GH_PAT: ${{ secrets.GH_PAT }}              
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: python .github/scripts/describe_repos.py
 
       - name: Commit progress

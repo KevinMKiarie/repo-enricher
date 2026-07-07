@@ -6,9 +6,9 @@ import requests
 from pathlib import Path
 
 PROGRESS_FILE = '.github/repo_progress.json'
-MODELS_URL = 'https://models.inference.ai.azure.com/chat/completions'
+MODELS_URL = 'https://api.groq.com/openai/v1/chat/completions'
 GH_API = 'https://api.github.com'
-MODEL = 'gpt-4o-mini'
+MODEL = 'llama-3.1-8b-instant'
 
 gh_headers = {
     'Authorization': f'Bearer {os.environ["GH_PAT"]}',
@@ -16,7 +16,7 @@ gh_headers = {
     'X-GitHub-Api-Version': '2022-11-28',
 }
 ai_headers = {
-    'Authorization': f'Bearer {os.environ["GH_PAT"]}',
+    'Authorization': f'Bearer {os.environ["GROQ_API_KEY"]}',
     'Content-Type': 'application/json',
 }
 
