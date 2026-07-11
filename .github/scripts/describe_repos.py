@@ -8,7 +8,19 @@ from pathlib import Path
 PROGRESS_FILE = '.github/repo_progress.json'
 MODELS_URL = 'https://api.groq.com/openai/v1/chat/completions'
 GH_API = 'https://api.github.com'
-MODEL = 'llama-3.1-8b-instant'
+MODEL = 'llama-3.3-70b-versatile'
+
+# Manifest files that best describe a project's purpose and dependencies
+MANIFEST_FILES = [
+    'package.json', 'pyproject.toml', 'setup.cfg', 'setup.py',
+    'Cargo.toml', 'go.mod', 'pom.xml', 'build.gradle', 'composer.json',
+    'pubspec.yaml', 'mix.exs', 'Gemfile', 'build.sbt', 'Makefile', 'Dockerfile',
+]
+
+SOURCE_EXTENSIONS = {
+    '.py', '.js', '.ts', '.go', '.rs', '.java', '.rb', '.php',
+    '.swift', '.kt', '.c', '.cpp', '.cs', '.sh',
+}
 
 gh_headers = {
     'Authorization': f'Bearer {os.environ["GH_PAT"]}',
@@ -52,35 +64,114 @@ def get_readme(owner, repo):
     r = requests.get(f'{GH_API}/repos/{owner}/{repo}/readme', headers=gh_headers)
     if r.status_code != 200:
         return ''
-    return base64.b64decode(r.json()['content']).decode('utf-8', errors='ignore')[:2000]
+    return base64.b64decode(r.json()['content']).decode('utf-8', errors='ignore')[:1500]
 
 
-def ai_generate(repo_name, readme):
-    context = f'Repository name: {repo_name}'
+def get_file_tree(owner, repo, branch):
+    """Fetch the full file tree for a repo branch (blobs only, skip large files)."""
+    r = requests.get(
+        f'{GH_API}/repos/{owner}/{repo}/git/trees/{branch}',
+        headers=gh_headers,
+        params={'recursive': '1'},
+    )
+    if r.status_code != 200:
+        return []
+    items = r.json().get('tree', [])
+    return [
+        item['path'] for item in items
+        if item['type'] == 'blob' and item.get('size', 0) < 100_000
+    ]
+
+
+def get_file_content(owner, repo, path, max_chars=700):
+    """Fetch and decode a single file's content via the GitHub Contents API."""
+    r = requests.get(
+        f'{GH_API}/repos/{owner}/{repo}/contents/{path}',
+        headers=gh_headers,
+    )
+    if r.status_code != 200:
+        return ''
+    data = r.json()
+    if data.get('encoding') == 'base64':
+        return base64.b64decode(data['content']).decode('utf-8', errors='ignore')[:max_chars]
+    return ''
+
+
+def gather_project_context(owner, repo, default_branch, readme):
+    """
+    Build a rich context string by scanning the repo's file tree and fetching
+    the most informative files: README, manifest/config files, and top-level
+    source files. This gives the AI real understanding of the project's purpose.
+    """
+    files = get_file_tree(owner, repo, default_branch)
+    file_set = set(files)
+    parts = []
+
     if readme:
-        context += f'\n\nREADME excerpt:\n{readme}'
+        parts.append(f'README:\n{readme}')
 
-    prompt = (
+    # Fetch up to 2 manifest/config files (package.json, pyproject.toml, etc.)
+    fetched_manifests = 0
+    for mf in MANIFEST_FILES:
+        if fetched_manifests >= 2:
+            break
+        if mf in file_set:
+            content = get_file_content(owner, repo, mf, max_chars=700)
+            if content:
+                parts.append(f'{mf}:\n{content}')
+                fetched_manifests += 1
+
+    # Fetch up to 2 top-level source files for additional intent signals
+    top_src = [
+        f for f in files
+        if '/' not in f and Path(f).suffix in SOURCE_EXTENSIONS
+    ][:2]
+    for sf in top_src:
+        content = get_file_content(owner, repo, sf, max_chars=500)
+        if content:
+            parts.append(f'{sf} (excerpt):\n{content}')
+
+    # Always include the top-level directory structure as a quick orientation
+    if files:
+        top_items = sorted({f.split('/')[0] for f in files})[:20]
+        parts.append('Top-level structure:\n' + '\n'.join(top_items))
+
+    return '\n\n---\n\n'.join(parts)
+
+
+def ai_generate(repo_name, context):
+    system_msg = (
+        'You write GitHub repository descriptions. '
+        'Your goal is to describe WHAT the project does and WHY it exists — '
+        'its purpose, the problem it solves, or the value it provides. '
+        'Do NOT just list the tech stack or programming language. '
+        'Be specific and concrete. Keep descriptions under 120 characters.'
+    )
+    user_msg = (
+        f'Repository: {repo_name}\n\n'
         f'{context}\n\n'
-        'Generate a concise GitHub repository description (max 120 characters) '
-        'and up to 5 relevant topic tags (lowercase, hyphenated, no spaces).\n'
+        'Based on the context above, generate a GitHub repository description and up to 5 topic tags.\n'
         'Reply ONLY with valid JSON in this exact format:\n'
         '{"description": "...", "topics": ["tag1", "tag2"]}'
     )
 
     r = requests.post(MODELS_URL, headers=ai_headers, json={
         'model': MODEL,
-        'messages': [{'role': 'user', 'content': prompt}],
+        'messages': [
+            {'role': 'system', 'content': system_msg},
+            {'role': 'user', 'content': user_msg},
+        ],
         'temperature': 0.3,
-        'max_tokens': 150,
+        'max_tokens': 200,
     })
 
     if r.status_code == 429:
         return None, 'rate_limited'
 
     if not r.ok:
-        print(f'\nGitHub Models error {r.status_code}: {r.text}')
+        print(f'\nGroq error {r.status_code}: {r.text}')
         r.raise_for_status()
+
     text = r.json()['choices'][0]['message']['content']
     data = json.loads(text[text.index('{'):text.rindex('}') + 1])
     return data, 'ok'
@@ -126,10 +217,12 @@ def main():
     for repo in pending:
         name = repo['name']
         full_name = repo['full_name']
+        default_branch = repo.get('default_branch', 'main')
         print(f'Processing {full_name} ...', end=' ', flush=True)
 
         readme = get_readme(owner, name)
-        result, status = ai_generate(name, readme)
+        context = gather_project_context(owner, name, default_branch, readme)
+        result, status = ai_generate(name, context)
 
         if status == 'rate_limited':
             print('\nRate limit reached — progress saved. Will resume on next run.')
